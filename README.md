@@ -119,6 +119,60 @@ unit1 + unit2 >> "ft"             # converts result of math to 'ft'
 Any object that defines a `to_unit` method will be automatically coerced to a
 unit during calculations.
 
+### Measurements & Significant Figures
+
+In a lab notebook, `1.20 m` and `1.2 m` are not the same precision. A plain
+`Unit` forgets this distinction as soon as the string is parsed, so
+`RubyUnits::Measurement` wraps a `Unit` and tracks the significant figures of
+the input alongside it. Values that are defined exactly (conversion factors,
+counted quantities) can be flagged as exact constants, which never limit the
+precision of a result.
+
+```ruby
+RubyUnits::Measurement.new("1.20 m").to_s        #=> "1.20 m" (3 significant figures)
+RubyUnits::Measurement.new("1.2 m").to_s         #=> "1.2 m"  (2 significant figures)
+RubyUnits::Measurement.exact("12 in")            # an exact constant
+RubyUnits::Measurement.new("1.2 m", sig_figs: 3) # explicit override
+```
+
+The internal value is always kept unrounded. Rounding to the propagated
+precision happens only when the measurement is explicitly displayed with
+`to_s` or quantized with `quantize`:
+
+```ruby
+length = RubyUnits::Measurement.new("1.20 m").convert_to("ft")
+length.scalar   #=> 3.937007874015748 (unrounded)
+length.to_s     #=> "3.94 ft"
+length.quantize #=> measurement whose internal scalar is actually 3.94
+```
+
+Precision propagates differently for the four arithmetic operations:
+
+- Multiplication and division keep the **significant figures** of the least
+  precise operand: `1.20 m * 0.35 m #=> "0.42 m^2"`.
+- Addition and subtraction keep the **decimal places** of the least precise
+  operand (compared in a common unit): `1.20 m + 30.0 cm #=> "1.50 m"`.
+- Bare numerics (`measurement * 2`) and `Measurement.exact` values are exact
+  constants and do not limit precision.
+- Unit conversions preserve precision because conversion factors are exact.
+  Temperature scale conversions (`tempC`, `tempF`, ...) involve exact
+  offsets, so they follow the addition rule: `1.20 tempC` converts to
+  `"34.16 tempF"`, while a differential `1.20 degC` is pure scaling and
+  converts to `"2.16 degF"`.
+
+Because the internal value is never rounded, you should convert units first
+and compute afterwards, letting the chain carry full precision to the end.
+Truncating intermediate values discards information and can change the
+result:
+
+```ruby
+length = RubyUnits::Measurement.new("1.15 m").convert_to("ft")
+(length * 2).to_s #=> "7.55 ft"
+# Writing down the intermediate "3.77 ft" first would give 3.77 * 2 = "7.54 ft".
+# The unrounded chain keeps 3.937007874015748 internally, so the final
+# rounding to 3 significant figures is correct.
+```
+
 ### Text Output
 
 Units will display themselves nicely based on the display_name for the units and
