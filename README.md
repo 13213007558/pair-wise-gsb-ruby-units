@@ -157,6 +157,45 @@ Strings can be converted to units using the `convert_to` method:
 '100 km/h'.convert_to('m/s')      # converts compound units
 ```
 
+### Mixed-Radix Formats
+
+Instruments often report quantities as a sequence of segments, such as
+`12°59′59.999″` or `12:34:56.789`, while the rest of the system only accepts a
+single `Unit`. `RubyUnits::MixedRadix` parses and formats these values. The
+caller configures the unit of each segment, the carry base between consecutive
+segments, and the separator appended to each segment.
+
+```ruby
+RubyUnits::Unit.define("arcmin") do |unit|
+  unit.definition = RubyUnits::Unit.new(Rational(1, 60), "deg")
+  unit.aliases = %w[arcmin]
+end
+RubyUnits::Unit.define("arcsec") do |unit|
+  unit.definition = RubyUnits::Unit.new(Rational(1, 60), "arcmin")
+  unit.aliases = %w[arcsec]
+end
+
+dms = RubyUnits::MixedRadix.new(units: %w[deg arcmin arcsec],
+                                bases: [60, 60],
+                                separators: ["°", "′", "″"])
+
+angle = dms.parse("12°59′59.999″")   #=> 46799999/3600000 deg (a single Unit)
+dms.format(angle, precision: 3)      #=> "12°59′59.999″"
+dms.format(angle, precision: 2)      #=> "13°0′0.00″" (rounding carries into the first segment)
+
+hms = RubyUnits::MixedRadix.new(units: %w[hour min sec],
+                                bases: [60, 60],
+                                separators: [":", ":", ""])
+hms.format(hms.parse("12:34:56.789"), precision: 3)  #=> "12:34:56.789"
+```
+
+Values are always handled as a whole: a leading sign applies to every segment,
+so `-0°1′` parses as a negative quantity, and negative values format with a
+single leading sign. Segment units must be dimensionally compatible with each
+other and each carry base must match the ratio between its neighboring units;
+otherwise an `ArgumentError` is raised. Integer and Rational scalars keep their
+exact values through parsing and formatting.
+
 ### Time Helpers
 
 Ruby-units extends the `Time`, `Date`, and `DateTime` classes to support unit-based arithmetic,
