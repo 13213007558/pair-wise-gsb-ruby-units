@@ -322,6 +322,41 @@ Math.log(Unit.new("8"), 2)          #=> 3.0 (log base 2)
 a Unit with dimensions (like meters), it will be converted to radians, which may produce
 unexpected results.
 
+### Buckingham Pi Analysis
+
+`Unit.buckingham_pi` performs a Buckingham Pi analysis and returns a basis of
+independent dimensionless products. Rank and null-space calculations use
+`Integer` and `Rational` arithmetic rather than floating-point matrix ranks.
+
+```ruby
+variables = {
+  density:   Unit.new("1000 kg/m^3"),
+  velocity:  Unit.new("2 m/s"),
+  length:    Unit.new("3 m"),
+  viscosity: Unit.new("1/1000 Pa*s")
+}
+
+groups = Unit.buckingham_pi(
+  variables,
+  repeating_variables: %i[velocity length viscosity]
+)
+
+groups.first[:exponents]
+# => {:density=>1, :velocity=>1, :length=>1, :viscosity=>-1}
+groups.first[:product]
+# => 6000000
+```
+
+Array input uses zero-based indexes in `:exponents`; use the second positional
+argument or either the `repeating:` or `repeating_variables:` keyword to select
+repeating variables.
+
+If the supplied repeating variables are dependent or do not span the
+dimensional matrix, the method raises `ArgumentError` with the matrix rank and
+supplied count. The result is a valid basis for dimensionless products, not a
+claim that any particular physical formula is unique. Correct conversions of
+the input values leave the computed dimensionless values unchanged.
+
 ### Temperatures
 
 Ruby-units makes a distinction between a temperature (which technically is a

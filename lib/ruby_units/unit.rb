@@ -669,6 +669,14 @@ module RubyUnits
       unit_class.kinds[signature]
     end
 
+    # Return the integer vector of base dimensions used by dimensional analysis.
+    # Component order follows {SIGNATURE_VECTOR}.
+    #
+    # @return [Array<Integer>]
+    def dimensional_vector
+      unit_signature_vector
+    end
+
     # Convert the unit to a Unit, possibly performing a conversion.
     # > The ability to pass a Unit to convert to was added in v3.0.0 for
     # > consistency with other uses of #to_unit.
