@@ -322,6 +322,51 @@ Math.log(Unit.new("8"), 2)          #=> 3.0 (log base 2)
 a Unit with dimensions (like meters), it will be converted to radians, which may produce
 unexpected results.
 
+### Buckingham Pi Analysis
+
+`Unit.buckingham_pi` performs Buckingham Pi dimensional analysis on measured quantities.
+It returns independent dimensionless products together with a `Rational` exponent for each input
+variable. Rank and independence are calculated with integer/Rational Gaussian elimination, not floating
+point thresholds.
+
+```ruby
+variables = [
+  Unit.new("1 m/s^2"), # acceleration
+  Unit.new("1 m/s"),   # velocity
+  Unit.new("1 m")     # length
+]
+
+result = Unit.buckingham_pi(variables, repeating: [1, 2])
+result.rank                         #=> 2
+result.repeating_indices            #=> [1, 2]
+result.dimension_matrix             #=> [[1, 1, 1], [-2, -1, 0]]
+
+group = result.groups.first
+group.name                          #=> "pi_1"
+group.exponents                     #=> [(1/1), (-2/1), (1/1)]
+group.exponent(1)                   #=> (-2/1)
+group.product                       #=> 1 (dimensionless): a*l/v^2
+```
+
+Omit `repeating:` to choose an independent set from the dimensional matrix. Supplied repeated variables
+must be unique, in range, and as independent as the unit dimensions require; otherwise an `ArgumentError`
+states the required and observed ranks.
+
+The products form one dimensionless basis; they are mathematically independent but are not a claim that the
+groups are the unique physical law or empirical correlation. Compatible input units give the same evaluated
+value after correct conversion, including replacing meters with centimeters:
+
+```ruby
+centimeters = [
+  Unit.new("100 cm/s^2"),
+  Unit.new("100 cm/s"),
+  Unit.new("100 cm")
+]
+
+Unit.buckingham_pi(centimeters, repeating: [1, 2]).groups.first.product
+#=> 1, matching the meter calculation
+```
+
 ### Temperatures
 
 Ruby-units makes a distinction between a temperature (which technically is a

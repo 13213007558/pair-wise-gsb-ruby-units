@@ -25,6 +25,15 @@ module RubyUnits
   #
   class Unit < ::Numeric
     class << self
+      # Perform Buckingham Pi dimensional analysis on a set of quantities with units.
+      # @param variables [Array<#to_unit>] quantities with units
+      # @param repeating [Array<Integer>, nil] zero-based repeated-variable indices
+      # @return [RubyUnits::BuckinghamPi.Result]
+      def buckingham_pi(*variables, repeating: nil)
+        variables = variables.first if variables.one? && variables.first.is_a?(::Array)
+        RubyUnits::BuckinghamPi.analyze(variables, repeating: repeating)
+      end
+
       # return a list of all defined units
       # @return [Hash{Symbol=>RubyUnits::Units::Definition}]
       attr_reader :definitions
