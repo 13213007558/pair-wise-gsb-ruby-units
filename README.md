@@ -369,6 +369,68 @@ Conversions are probably better done like this...
 Unit.new('0 tempC') + Unit.new('100 degC') #=> Unit.new('100 tempC')
 ```
 
+### Measurements & Significant Figures
+
+In lab records, "1.20 m" and "1.2 m" are not the same measurement: the
+trailing zero tells you the value was measured to the nearest centimeter.
+`RubyUnits::Measurement` wraps a `Unit` and tracks that precision (plus an
+"exact constant" flag) so unit conversions and arithmetic can report a
+sensible display precision.
+
+```ruby
+m = RubyUnits::Measurement.new("1.20 m")   # 3 significant figures
+m.sig_figs                                 #=> 3
+m.to_s                                     #=> "1.20 m"
+m.to_s("cm")                               #=> "120. cm" (trailing "." marks significant zeros)
+RubyUnits::Measurement.new("1.2 m") == m   #=> false (different precision)
+```
+
+Values that are exact by definition (conversion factors, counts) never limit
+the precision of a result:
+
+```ruby
+RubyUnits::Measurement.exact("2.54 cm/in") # or: Measurement.new("2.54 cm/in", exact: true)
+```
+
+Precision propagates with the usual laboratory rules. Multiplication and
+division keep the fewest significant figures of the operands, while addition
+and subtraction keep the least precise decimal place (compared in a common
+unit):
+
+```ruby
+Measurement.new("1.20 m") + Measurement.new("3.45 cm")   #=> "1.23 m" (decimal places)
+Measurement.new("1.20 m") * Measurement.new("1.2 m")     #=> "1.4 m^2" (significant figures)
+Measurement.new("1.20 m") * 2                            #=> "2.40 m" (numbers are exact)
+```
+
+Affine temperature-scale conversions carry the decimal-place precision
+through the offset:
+
+```ruby
+Measurement.new("20.0 tempC").to_s("tempF")   #=> "68.0 tempF"
+Measurement.new("20.0 tempC").to_s("tempK")   #=> "293.2 tempK"
+```
+
+The internal value is never rounded; rounding happens only when the
+measurement is explicitly formatted with `to_s` or quantized with
+`quantize`. This is why you should convert units first and then calculate,
+instead of truncating values at each step:
+
+```ruby
+length = Measurement.new("1.25 m")
+width  = Measurement.new("30.5 cm").convert_to("m")   # 0.305 m, kept unrounded
+area   = length * width
+area.to_unit.scalar                                    #=> 0.38125 (unrounded)
+area.to_s                                              #=> "0.381 m^2"
+
+# Truncating the converted width to 0.31 m before multiplying would give
+# 0.3875, which displays as "0.39 m^2" -- a different, wrong last digit.
+# Chains of conversions and arithmetic only stay correct because the
+# intermediate values are never truncated.
+
+area.quantize                                          #=> "0.381 m^2" with 0.381 stored internally
+```
+
 ### Defining Units
 
 It is possible to define new units or redefine existing ones.
