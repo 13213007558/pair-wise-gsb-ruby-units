@@ -590,7 +590,17 @@ end
 # angle
 RubyUnits::Unit.define("degree") do |deg|
   deg.definition = RubyUnits::Unit.new(Math::PI / 180.0, "radian")
-  deg.aliases = %w[deg degree degrees]
+  deg.aliases = %w[deg degree degrees °]
+end
+
+RubyUnits::Unit.define("arcminute") do |arcminute|
+  arcminute.definition = RubyUnits::Unit.new(Rational(1, 60), "degree")
+  arcminute.aliases = %w[arcmin arcminute arcminutes ′]
+end
+
+RubyUnits::Unit.define("arcsecond") do |arcsecond|
+  arcsecond.definition = RubyUnits::Unit.new(Rational(1, 3600), "degree")
+  arcsecond.aliases = %w[arcsec arcsecond arcseconds ″]
 end
 
 RubyUnits::Unit.define("gon") do |grad|

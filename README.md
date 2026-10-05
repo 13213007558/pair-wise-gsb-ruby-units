@@ -142,6 +142,25 @@ Unit.new("100 kg").to_s(:lbs)     # returns 220 lbs, 7 oz
 Unit.new("100 kg").to_s(:stone)   # returns 15 stone, 10 lb
 ```
 
+Configurable mixed-radix representations are also available. Pass the ordered
+segment units and the carry base between each adjacent pair. Parsed values are
+kept as `Rational` values when the segment conversions are exact, and the
+formatting precision is expressed as an increment of the final segment.
+
+```ruby
+angle = Unit.mixed_radix(%w[° ′ ″], [60, 60])
+angle_unit = Unit.new("12°59′59.999″", angle)
+angle_unit.to_s(angle, precision: Rational(1, 1000)) #=> "12°59′59.999″"
+
+duration = Unit.mixed_radix(%w[h min s], [60, 60])
+Unit.parse_mixed_radix("1 h 2 min 3.5 s", %w[h min s], [60, 60])
+duration_unit = Unit.new("1 h 2 min 3.5 s", duration)
+duration_unit.to_s(duration, precision: Rational(1, 10)) #=> "1 h 2 min 3.5 s"
+```
+
+The sign applies to the complete value, so later segments must remain unsigned.
+Segments with incompatible dimensions are rejected.
+
 You can also use Ruby's standard string formatting operator (`%`) with units:
 
 ```ruby

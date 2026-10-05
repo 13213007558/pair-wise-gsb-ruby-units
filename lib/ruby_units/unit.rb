@@ -244,6 +244,20 @@ module RubyUnits
       definitions[unit]
     end
 
+    # Create a configurable mixed-radix representation.
+    #
+    # @return [RubyUnits::MixedRadix]
+    def self.mixed_radix(units, radices = nil, **options)
+      RubyUnits::MixedRadix.new(units, radices, unit_class: self, **options)
+    end
+
+    # Parse a configurable mixed-radix string.
+    #
+    # @return [RubyUnits::Unit]
+    def self.parse_mixed_radix(string, units, radices = nil, **options)
+      mixed_radix(units, radices, **options).parse(string)
+    end
+
     # @param  [RubyUnits::Unit::Definition, String] unit_definition
     # @return [RubyUnits::Unit::Definition]
     # @raise  [ArgumentError] when passed a non-string if using the block form
@@ -784,8 +798,11 @@ module RubyUnits
     # @return [String]
     def to_s(target_units = nil, precision: nil, format: nil)
       configuration = RubyUnits.configuration
-      precision ||= configuration.default_precision
       format ||= configuration.format
+
+      return target_units.format(self, precision || 1) if target_units.is_a?(RubyUnits::MixedRadix)
+
+      precision ||= configuration.default_precision
       out = @output[target_units]
       return out if out
 
@@ -1888,7 +1905,7 @@ module RubyUnits
       case options
       in [first] if first
         parse_single_arg(first)
-      in [first, String => second] if first
+      in [first, String | RubyUnits::MixedRadix => second] if first
         parse_two_args(first, second)
       in [first, String | Array => second, String | Array => third] if first
         parse_three_args(first, second, third)
@@ -1932,10 +1949,16 @@ module RubyUnits
     end
 
     # Parse two arguments (scalar and unit string)
-    # @param [Numeric] scalar
-    # @param [String] unit_string
+    # @param [Numeric, String] scalar
+    # @param [String, RubyUnits::MixedRadix] unit_string
     # @return [void]
     def parse_two_args(scalar, unit_string)
+      if unit_string.is_a?(RubyUnits::MixedRadix)
+        raise ArgumentError, "Invalid Unit Format" unless scalar.is_a?(String)
+
+        return copy(unit_string.parse(scalar))
+      end
+
       cached = unit_class.cached.get(unit_string)
       if cached
         copy(cached * scalar)
