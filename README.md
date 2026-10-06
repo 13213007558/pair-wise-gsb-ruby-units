@@ -100,6 +100,35 @@ Unit.new("1 mm") + "2 mm"  == Unit.new("3 mm")
 This will work as expected so long as you start the formula with a `Unit`
 object.
 
+### Unit-aware linear systems
+
+For small dense systems with mixed row units, pass a coefficient matrix and
+constant vector made entirely of `Unit` objects, plus the target unit of each
+unknown. Every `A[i,j] * x[j]` term is checked against `b[i]` before solving.
+The system is normalized row-by-row and column-by-column, solved numerically,
+and then converted back to the requested units. Numeric zero is not accepted
+in `A` or `b` because it carries no unit information; use a zero quantity such
+as `Unit.new("0 N*m/rad")` instead.
+
+```ruby
+a = [
+  [Unit.new("100 N/m"), Unit.new("50 N/rad")],
+  [Unit.new("200 N"),   Unit.new("25 N*m/rad")]
+]
+b = [Unit.new("7 N"), Unit.new("6.5 N*m")]
+
+result = Unit.solve_linear_system(a, b, %w[m rad])
+result.x          #=> [0.02 m, 0.1 rad]
+result.residuals  #=> [~0 N, ~0 N*m]
+```
+
+The same physical system can use millimeters and kilonewtons throughout. The
+normalized numeric system may differ, but the recovered quantities are
+equivalent. A singular coefficient matrix raises
+`RubyUnits::LinearSystem::SingularSystemError`; a singular matrix with a
+contradictory row raises
+`RubyUnits::LinearSystem::InconsistentSystemError`.
+
 ### Conversions & Comparisons
 
 Units can be converted to other units in a couple of ways.
