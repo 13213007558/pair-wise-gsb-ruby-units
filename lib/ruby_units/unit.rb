@@ -367,6 +367,46 @@ module RubyUnits
       unit_class.new(unit_class.eliminate_terms(@scalar, @numerator, @denominator))
     end
 
+    CompactResult = Data.define(:unit, :cost, :exponents, :uncovered_dimensions, :reason) do
+      def complete?
+        uncovered_dimensions.empty? && reason.nil?
+      end
+    end
+
+    # Select the lowest-cost bounded combination of candidate units that has
+    # exactly the same dimensions as this unit.
+    #
+    # @param candidates [Hash{String, Symbol, Unit => Numeric}, Array<Array>] candidate units and display costs
+    # @param max_exponent [Integer] maximum absolute exponent for each candidate (default: 3)
+    # @return [RubyUnits::Unit::CompactResult]
+    # @raise [ArgumentError] when candidates or the exponent limit are invalid
+    #
+    # Each candidate may appear from `-max_exponent` to `max_exponent` times.
+    # Ties are selected deterministically by total cost, number of used
+    # candidates, and then the lexicographically smallest canonical unit and
+    # exponent vector.
+    def compact(candidates, max_exponent: 3)
+      raise ArgumentError, "Absolute temperatures cannot be compacted by linear unit scaling" if temperature?
+
+      candidate_list = normalize_compact_candidates(candidates)
+      target_vector = compact_dimension_vector(to_base)
+      best = compact_best_combination(target_vector, candidate_list, max_exponent)
+      return compact_failure_result(candidate_list, target_vector, max_exponent) unless best
+
+      exponents, cost, numerator, denominator = best
+      combination = unit_class.new(unit_class.eliminate_terms(1, numerator, denominator))
+      converted = convert_to_compact_combination(combination)
+      CompactResult.new(unit: converted, cost:, exponents:, uncovered_dimensions: [], reason: nil)
+    end
+
+    # @return [RubyUnits::Unit] the converted unit when a complete compact representation exists,
+    #   otherwise the original unit unchanged
+    # @see #compact
+    def compact_to(candidates, max_exponent: 3)
+      result = compact(candidates, max_exponent: max_exponent)
+      result.complete? ? result.unit : self
+    end
+
     # return an array of base units
     # @return [Array]
     def self.base_units
@@ -1662,6 +1702,240 @@ module RubyUnits
         index = SIGNATURE_VECTOR.index(definition.kind)
         vector[index] += sign if index
       end
+    end
+
+    def compact_dimension_vector(base_unit)
+      names = compact_dimension_names
+      vector = ::Hash.new(0)
+      [[base_unit.numerator, 1], [base_unit.denominator, -1]].each do |items, sign|
+        items.each do |item|
+          definition = unit_class.definition(item)
+          next unless definition&.kind
+
+          kind = definition.kind.to_s
+          vector[kind] += sign if names.include?(kind)
+        end
+      end
+      names.map { vector[_1] }
+    end
+
+    def compact_dimension_names
+      unit_class.definitions.each_value.filter_map do |definition|
+        next unless definition.base?
+        next unless definition.kind
+        next if definition.kind == :prefix
+
+        definition.kind.to_s
+      end.uniq.sort.freeze
+    end
+
+    def normalize_compact_candidates(candidates)
+      pairs = case candidates
+              when Hash
+                candidates.map { |unit, cost| [unit, cost] }
+              when Array
+                unless candidates.all? { |pair| pair.is_a?(Array) && pair.size == 2 }
+                  raise ArgumentError, "Array candidates must contain [unit, cost] pairs"
+                end
+
+                candidates
+              else
+                raise ArgumentError, "candidates must be a Hash or an Array of [unit, cost] pairs"
+              end
+
+      normalized = pairs.filter_map.with_index do |(unit, cost), index|
+        raise ArgumentError, "candidate costs must be non-negative Numeric values" unless cost.is_a?(Numeric) && cost >= 0
+
+        candidate = compact_candidate_unit(unit)
+        next if candidate.temperature?
+
+        [candidate.units, candidate, cost, index]
+      end
+      raise ArgumentError, "at least one linear candidate unit is required" if normalized.empty?
+
+      normalized
+        .group_by(&:first)
+        .values
+        .map { |group| group.min_by { |_, _, cost, index| [cost, index] } }
+        .sort_by { |label, _, _, index| [label, index] }
+        .map { |_, candidate, cost, _| { unit: candidate, cost:, vector: compact_dimension_vector(candidate.to_base) } }
+    end
+
+    def compact_candidate_unit(unit)
+      case unit
+      when Unit
+        unit
+      when String, Symbol
+        unit_class.new(unit.to_s)
+      else
+        raise ArgumentError, "candidate units must be Strings, Symbols, or Units"
+      end
+    end
+
+    def compact_best_combination(target_vector, candidates, max_exponent)
+      unless max_exponent.is_a?(Integer) && max_exponent.positive?
+        raise ArgumentError, "max_exponent must be a positive Integer"
+      end
+
+      states = compact_search_states(target_vector.size, candidates, max_exponent)
+      best = states[target_vector]
+      return unless best
+
+      exponents = best[:exponents].each_with_object({}) do |(label, exponent), hash|
+        hash[label] = exponent unless exponent.zero?
+      end
+      [exponents, best[:cost], best[:numerator], best[:denominator]]
+    end
+
+    def compact_search_states(dimension_size, candidates, max_exponent)
+      zero = ::Array.new(dimension_size, 0)
+      states = {
+        zero => {
+          vector: zero,
+          exponents: [],
+          cost: 0,
+          numerator: [],
+          denominator: []
+        }
+      }
+
+      candidates.each do |candidate|
+        next_states = {}
+        vector = candidate[:vector]
+        unit = candidate[:unit]
+        cost = candidate[:cost]
+
+        states.each_value do |previous_state|
+          state = {
+            **previous_state,
+            exponents: previous_state[:exponents] + [[unit.units, 0]],
+            vector: previous_state[:vector]
+          }
+          next_states[state[:vector]] = state if replace_compact_state?(next_states[state[:vector]], state)
+        end
+
+        states.each_value do |state|
+          (1..max_exponent).each do |exponent|
+            compact_apply_candidate_state(next_states, state, vector, unit, cost, exponent)
+            compact_apply_candidate_state(next_states, state, vector, unit, cost, -exponent)
+          end
+        end
+
+        states = next_states
+      end
+      states
+    end
+
+    def compact_apply_candidate_state(states, state, vector, unit, cost, exponent)
+      exponent_vector = vector.map { _1 * exponent }
+      new_vector = state[:vector].zip(exponent_vector).map { |value, exponent_value| value + exponent_value }
+      new_exponents = state[:exponents] + [[unit.units, exponent]]
+      new_cost = state[:cost] + cost * exponent.abs
+      new_numerator = state[:numerator].dup
+      new_denominator = state[:denominator].dup
+      if exponent.positive?
+        new_numerator.concat(unit.numerator * exponent)
+        new_denominator.concat(unit.denominator * exponent)
+      else
+        absolute_exponent = exponent.abs
+        new_numerator.concat(unit.denominator * absolute_exponent)
+        new_denominator.concat(unit.numerator * absolute_exponent)
+      end
+      candidate_state = {
+        vector: new_vector,
+        exponents: new_exponents,
+        cost: new_cost,
+        numerator: new_numerator,
+        denominator: new_denominator
+      }
+      replace_compact_state?(states[new_vector], candidate_state) and
+        states[new_vector] = candidate_state
+    end
+
+    def replace_compact_state?(existing, candidate)
+      return true unless existing
+
+      compact_key_values(candidate).each_with_index do |value, index|
+        comparison = compact_value_comparison(value, compact_key_values(existing)[index])
+        return comparison.negative? unless comparison.zero?
+      end
+      false
+    end
+
+    def compact_key_values(state)
+      [
+        state[:cost],
+        state[:exponents].count { |_, exponent| !exponent.zero? },
+        state[:exponents].map(&:last),
+        state[:exponents].map { |_, exponent| exponent.abs }
+      ]
+    end
+
+    def compact_value_comparison(left, right)
+      return left <=> right unless left.is_a?(Array)
+
+      left.each_with_index do |value, index|
+        comparison = compact_value_comparison(value, right[index])
+        return comparison unless comparison.zero?
+      end
+      left.size <=> right.size
+    end
+
+    def compact_failure_result(candidates, target_vector, max_exponent)
+      residual = compact_residual_vector(target_vector, candidates.map { _1[:vector] })
+      names = compact_dimension_names
+      uncovered = residual.each_with_index.filter_map do |value, index|
+        next if value.zero?
+
+        "#{names[index]}^#{target_vector[index]}"
+      end
+      reason = if uncovered.empty?
+                 "no complete representation with exponents between -#{max_exponent} and #{max_exponent}"
+               else
+                 "candidate units do not cover: #{uncovered.join(', ')}"
+               end
+      CompactResult.new(unit: self, cost: nil, exponents: {}, uncovered_dimensions: uncovered, reason:)
+    end
+
+    def compact_residual_vector(target_vector, vectors)
+      residual = target_vector.map(&:to_r)
+      basis = []
+
+      vectors.each do |vector|
+        projected = vector.map(&:to_r)
+        basis.each do |basis_vector|
+          coefficient = rational_vector_dot(projected, basis_vector) / rational_vector_dot(basis_vector, basis_vector)
+          projected = projected.zip(basis_vector).map { |value, basis_value| value - coefficient * basis_value }
+        end
+        basis << projected unless projected.all?(&:zero?)
+      end
+
+      basis.each do |basis_vector|
+        coefficient = rational_vector_dot(residual, basis_vector) / rational_vector_dot(basis_vector, basis_vector)
+        residual = residual.zip(basis_vector).map { |value, basis_value| value - coefficient * basis_value }
+      end
+      residual
+    end
+
+    def rational_vector_dot(left, right)
+      left.zip(right).sum { |left_value, right_value| left_value * right_value }
+    end
+
+    def convert_to_compact_combination(combination)
+      base = to_base
+      converted_scalar = compact_divide_scalar(base.scalar, combination.base_scalar)
+      unit_class.new(
+        scalar: converted_scalar,
+        numerator: combination.numerator,
+        denominator: combination.denominator,
+        signature: combination.signature
+      )
+    end
+
+    def compact_divide_scalar(numerator, denominator)
+      return numerator / denominator unless numerator.is_a?(Integer) && denominator.is_a?(Integer)
+
+      unit_class.simplify_rational(Rational(numerator, denominator))
     end
 
     private

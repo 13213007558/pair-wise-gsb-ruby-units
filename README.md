@@ -119,6 +119,33 @@ unit1 + unit2 >> "ft"             # converts result of math to 'ft'
 Any object that defines a `to_unit` method will be automatically coerced to a
 unit during calculations.
 
+### Compact Representations
+
+Use `#compact` to choose the lowest-cost combination from a caller-provided
+set of units. Costs represent display preference; the cost of a unit with an
+exponent is multiplied by the exponent's absolute value. Each candidate may be
+used with an integer exponent between `-max_exponent` and `max_exponent`, which
+keeps the search bounded. Matching uses the complete dimensional vector, so a
+radian is not silently removed as a dimensionless quantity.
+
+```ruby
+candidates = { "N" => 1, "J" => 1, "Pa" => 1, "kg" => 3, "m" => 3, "s" => 3 }
+
+force = Unit.new("12 kg*m/s^2").compact(candidates)
+force.unit     #=> 12 N
+force.cost     #=> 1
+force.exponents #=> { "N" => 1 }
+
+force.unit.convert_to("kg*m/s^2") #=> 12 kg*m/s^2
+```
+
+Use `#compact_to` when only a unit is needed. If no bounded combination has
+exactly the original dimensions, it returns the original unit unchanged.
+`CompactResult#uncovered_dimensions` identifies dimensions not spanned by the
+candidate table, including semantic dimensions such as `angle`. For example,
+compacting radians without an angular candidate reports `angle^1` instead of
+treating radians as a plain unitless number.
+
 ### Text Output
 
 Units will display themselves nicely based on the display_name for the units and
