@@ -369,6 +369,47 @@ Conversions are probably better done like this...
 Unit.new('0 tempC') + Unit.new('100 degC') #=> Unit.new('100 tempC')
 ```
 
+### UCUM
+
+For machine-readable external reports using [UCUM](https://ucum.org/) codes,
+use the strict, case-sensitive `RubyUnits::Ucum` entry point. The regular
+`Unit.new` string parser stays intentionally permissive; the UCUM parser
+rejects ambiguous or unknown codes and reports the exact source position of
+any problem.
+
+The initial subset supports proportional units with multiplication/division,
+decimal (metric) prefixes, integer exponents, parenthesized or bracketed
+grouping, annotations, and the non-proportional Celsius scale (`Cel`).
+
+```ruby
+RubyUnits::Ucum.parse('m/s2')     #=> #<RubyUnits::Ucum::Expression ...>
+RubyUnits::Ucum.load('km', 5)     #=> 5 km
+Unit.ucum('10^3Pa')               #=> 1000 Pa
+
+Unit.new('1 km/s').to_ucum        #=> "km/s"
+RubyUnits::Ucum.dump(Unit.new('1 m^2/s^2')) #=> "m2/s2"
+```
+
+Annotations are kept on the parsed expression and re-emitted with
+`Expression#to_ucum`, even though they do not change the unit's meaning:
+
+```ruby
+RubyUnits::Ucum.parse('m{height}').to_ucum #=> "m{height}"
+```
+
+Celsius is an affine (offset) scale, so `Cel` can only represent a standalone
+temperature reading. Combining it with multiplication, division, or
+exponentiation raises `RubyUnits::Ucum::OffsetUnitError`.
+
+```ruby
+RubyUnits::Ucum.parse('Cel').convert(100, 'K') #=> 373.15 tempK
+RubyUnits::Ucum.parse('Cel/s')                 #=> RubyUnits::Ucum::OffsetUnitError
+```
+
+UCUM special functions that are not implemented yet (for example `[pH]`,
+`[degF]`, or `B`) raise `RubyUnits::Ucum::UnsupportedSpecialError`, which
+exposes the function name and its position in the source code.
+
 ### Defining Units
 
 It is possible to define new units or redefine existing ones.

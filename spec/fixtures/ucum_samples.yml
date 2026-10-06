@@ -1,0 +1,60 @@
+# Short canonical UCUM (Unified Code for Units of Measure) samples.
+# Each sample is read in, optionally converted, serialized back out, and
+# compared by base-unit meaning. Codes are strict and case sensitive.
+samples:
+  - code: m
+    base: 1 meter
+    canonical: m
+
+  - code: m/s2
+    base: 1 m/s^2
+    canonical: m/s2
+
+  - code: kg/m3
+    base: 1 kg/m^3
+    canonical: kg/m3
+
+  - code: kPa
+    base: 1000 Pa
+    canonical: kPa
+
+  - code: 10^3Pa
+    base: 1000 pascal
+    canonical: kPa
+
+  - code: (m/s)2
+    base: 1 m^2/s^2
+    canonical: m2/s2
+
+  - code: N.m
+    base: 1 N*m
+    canonical: N.m
+
+  - code: um
+    base: 1 um
+    canonical: um
+
+  - code: "%"
+    base: 1/100
+    canonical: 1/10^2
+
+  - code: m{s}
+    base: 1 meter
+    canonical: m
+    annotated: m{s}
+
+  - code: 1/min
+    base: 1 1/min
+    canonical: 1/min
+
+  # Non-proportional (affine) temperature scale.
+  - code: Cel
+    affine: true
+    value: 100
+    target: K
+    target_value: 373.15
+    canonical: Cel
+
+  - code: Cel{sensor}
+    affine: true
+    annotated: Cel{sensor}

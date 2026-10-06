@@ -327,6 +327,18 @@ module RubyUnits
       second ? new(first).convert_to(second) : new(first)
     end
 
+    # Strictly parse a case-sensitive UCUM code. Use this entry point for
+    # machine-readable external reports instead of the lenient {Unit.new}
+    # string parser.
+    #
+    # @param code [String] formal UCUM code
+    # @param scalar [Numeric] measured value on the UCUM scale
+    # @return [RubyUnits::Unit]
+    # @see RubyUnits::Ucum.load
+    def self.ucum(code, scalar = 1)
+      RubyUnits::Ucum.load(code, scalar)
+    end
+
     # @param scalar [Numeric] quantity
     # @param numerator_units [Array] numerator
     # @param denominator_units [Array] denominator
@@ -811,6 +823,15 @@ module RubyUnits
     # @return [String]
     def inspect
       to_s
+    end
+
+    # Serialize this unit as a canonical, case-sensitive UCUM code.
+    #
+    # @return [String]
+    # @raise [RubyUnits::Ucum::OutputError] when the unit cannot be represented as UCUM
+    # @see RubyUnits::Ucum.dump
+    def to_ucum
+      RubyUnits::Ucum.dump(self)
     end
 
     # true if unit is a 'temperature', false if a 'degree' or anything else
