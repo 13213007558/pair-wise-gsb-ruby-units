@@ -100,6 +100,29 @@ Unit.new("1 mm") + "2 mm"  == Unit.new("3 mm")
 This will work as expected so long as you start the formula with a `Unit`
 object.
 
+### Quantity matrices
+
+Small, dense linear systems can keep units on every coefficient and right-hand
+side. Specify the target unit for every unknown. The solver scales each row and
+column to a dimensionless system, solves it without converting scalars to
+floats, then restores units and returns row residuals.
+
+```ruby
+a = [
+  [Unit.new("2000 N/m"), Unit.new("2 N/rad")],
+  [Unit.new("1000 N*m/m"), Unit.new("4 N*m/rad")]
+]
+b = [Unit.new("6 N"), Unit.new("9 N*m")]
+
+solution = RubyUnits::QuantityMatrix.solve(a, b, target_units: ["m", "rad"])
+solution.unknowns   #=> [1/1000 m, 2 rad]
+solution.residuals  #=> [0 N, 0 N*m]
+```
+
+A zero coefficient must retain its units, such as `Unit.new("0 N/rad")`.
+Missing units, dimensionally incompatible rows, and singular matrices raise
+`MissingUnitError`, `IncompatibleUnitsError`, and `SingularMatrixError`.
+
 ### Conversions & Comparisons
 
 Units can be converted to other units in a couple of ways.
