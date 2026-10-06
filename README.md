@@ -119,6 +119,39 @@ unit1 + unit2 >> "ft"             # converts result of math to 'ft'
 Any object that defines a `to_unit` method will be automatically coerced to a
 unit during calculations.
 
+### Compact Representations
+
+Calculation results are often displayed in base units (e.g. `kg*m/s^2`) even
+when a report would use a derived unit (e.g. `N`). `Unit#compact` searches a
+caller-supplied table of candidate units and their display costs for the
+cheapest combination that spans exactly the same dimensions, and folds the
+conversion scale exactly into the scalar.
+
+```ruby
+Unit.new('5.6 kg*m/s^2').compact(%w[N J Pa kg m s]).unit   #=> 5.6 N
+Unit.new('5.6 kg*m/s^2').compact('N' => 1, 'kg' => 1, 'm' => 1, 's' => 1).unit
+                                                           #=> 5.6 N (cost 1 beats cost 4)
+Unit.new('1/3 J').compact(%w[N m]).unit                    #=> 1/3 N*m (exact)
+```
+
+Candidates may appear in the numerator and the denominator. The search is
+bounded by `max_exponent:` (default 2) so equivalent combinations cannot be
+retried indefinitely. Derived units may be linearly dependent (e.g. `J` and
+`N*m`); ties are broken deterministically in favor of fewer unit symbols and
+then earlier candidates. Dimensionless units with a semantic marker (like
+`rad`) are never silently dropped.
+
+The returned `CompactResult` reports whether the candidates fully cover the
+unit; when they do not, the original representation is kept and the uncovered
+dimensions are listed.
+
+```ruby
+result = Unit.new('2 rad/s').compact(%w[s])
+result.covered?               #=> false
+result.uncovered_dimensions   #=> [:angle]
+result.unit                   #=> 2 rad/s (unchanged)
+```
+
 ### Text Output
 
 Units will display themselves nicely based on the display_name for the units and
