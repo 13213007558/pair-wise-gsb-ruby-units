@@ -99,4 +99,26 @@ RubyUnits::Unit.define("decibel") do |unit|
   unit.numerator = %w[<decibel>]
   unit.aliases = %w[dB decibel decibels]
   unit.kind = :logarithmic
+  unit.log_base = 10
+  unit.log_scale = Rational(10)
+end
+
+RubyUnits::Unit.define("dBm") do |unit|
+  unit.scalar = 1
+  unit.numerator = %w[<dBm>]
+  unit.aliases = %w[dBm]
+  unit.kind = :logarithmic
+  unit.log_base = 10
+  unit.log_scale = Rational(10)
+  unit.log_reference = "mW"
+end
+
+RubyUnits::Unit.define("dBW") do |unit|
+  unit.scalar = 1
+  unit.numerator = %w[<dBW>]
+  unit.aliases = %w[dBW]
+  unit.kind = :logarithmic
+  unit.log_base = 10
+  unit.log_scale = Rational(10)
+  unit.log_reference = "W"
 end

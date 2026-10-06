@@ -5,8 +5,8 @@ require "yaml"
 RSpec.describe Unit.base_units do
   it { is_expected.to be_a Array }
 
-  it "has 14 elements" do
-    expect(subject.size).to eq(14)
+  it "has 16 elements" do
+    expect(subject.size).to eq(16)
   end
 
   %w[kilogram meter second ampere degK tempK mole candela each dollar steradian radian decibel byte].each do |u|

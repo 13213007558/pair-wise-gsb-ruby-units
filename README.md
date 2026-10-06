@@ -369,6 +369,27 @@ Conversions are probably better done like this...
 Unit.new('0 tempC') + Unit.new('100 degC') #=> Unit.new('100 tempC')
 ```
 
+### Logarithmic units
+
+`dB` is a reference-free logarithmic ratio. `dBm` and `dBW` are absolute power
+levels relative to 1 mW and 1 W respectively, so they are not added like linear
+units.
+
+```ruby
+level = Unit.new('0 dBm')
+level.convert_to('mW')             #=> 1 mW
+Unit.new('1 mW').convert_to('dBm') #=> 0 dBm
+
+level + Unit.new('3 dB')          #=> 3 dBm (apply a ratio to an absolute level)
+Unit.new('13 dBm') - Unit.new('10 dBm') #=> 3 dB (difference of levels is a ratio)
+
+# Combine physical powers explicitly; do not add two dBm values numerically.
+level.add_power(level)            #=> 3.0103 dBm (1 mW + 1 mW = 2 mW)
+
+Unit.new('0 dBm').convert_to('dBW') #=> -30 dBW
+Unit.new('0 mW').convert_to('dBm')  #=> -Infinity dBm
+```
+
 ### Defining Units
 
 It is possible to define new units or redefine existing ones.

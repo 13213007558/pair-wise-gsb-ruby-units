@@ -18,6 +18,15 @@ class RubyUnits::Unit < Numeric
     # @return [Array]
     attr_accessor :denominator
 
+    # @return [Numeric, nil]
+    attr_accessor :log_base
+
+    # @return [Numeric, nil]
+    attr_accessor :log_scale
+
+    # @return [String, nil]
+    attr_accessor :log_reference
+
     # Unit name to be used when generating output. This MUST be a parseable
     # string or it won't be possible to round trip the unit to a String and
     # back.
@@ -64,6 +73,9 @@ class RubyUnits::Unit < Numeric
       @numerator = nil
       @denominator = nil
       @display_name = nil
+      @log_base = nil
+      @log_scale = nil
+      @log_reference = nil
       yield self if block_given?
       set_defaults(name, definition)
     end
@@ -133,6 +145,14 @@ class RubyUnits::Unit < Numeric
     #   meter_definition.prefix? #=> false
     def prefix? = kind == :prefix
 
+    # Check if this definition represents a logarithmic unit
+    # @return [Boolean]
+    def logarithmic? = !log_base.nil?
+
+    # Check if this logarithmic definition has a linear reference unit
+    # @return [Boolean]
+    def log_level? = logarithmic? && !log_reference.nil?
+
     # Check if this definition is the unity definition (dimensionless with scalar = 1)
     # @return [Boolean] true if this is the unity (dimensionless) prefix definition
     # @example
@@ -190,6 +210,9 @@ class RubyUnits::Unit < Numeric
       @numerator = @numerator || definition[3] || RubyUnits::Unit::UNITY_ARRAY
       @denominator = @denominator || definition[4] || RubyUnits::Unit::UNITY_ARRAY
       @display_name ||= @aliases.first # rubocop:disable Naming/MemoizedInstanceVariableName
+      @log_base ||= definition[5]
+      @log_scale ||= definition[6]
+      @log_reference ||= definition[7]
     end
 
     # Check if denominator is the unity array
