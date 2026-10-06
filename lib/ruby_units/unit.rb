@@ -137,6 +137,8 @@ module RubyUnits
       currency
       information
       angle
+      logarithmic
+      logarithmic_level
     ].freeze
     @kinds = {
       -312_078 => :elastance,
@@ -186,7 +188,11 @@ module RubyUnits
       1_280_000_000 => :currency,
       25_600_000_000 => :information,
       511_999_999_980 => :angular_velocity,
-      512_000_000_000 => :angle
+      512_000_000_000 => :angle,
+      # 20**10 = 10_240_000_000_000
+      10_240_000_000_000 => :logarithmic,
+      # 20**11 = 204_800_000_000_000
+      204_800_000_000_000 => :logarithmic_level
     }.freeze
 
     # Class Methods
@@ -220,6 +226,7 @@ module RubyUnits
       @unit_regex = nil
       @unit_match_regex = nil
       @prefix_regex = nil
+      @log_regex = nil
 
       definitions.each_value do |definition|
         use_definition(definition)
@@ -490,6 +497,20 @@ module RubyUnits
       end
     end
 
+    # Generates (and memoizes) a regexp matching any of the logarithmic units or their aliases.
+    #
+    # Logarithmic units (dB, dBm, dBW, ...) are never cached because their
+    # semantics are not compatible with the generic linear arithmetic.
+    #
+    # @return [Regexp]
+    def self.log_regex
+      @log_regex ||= begin
+        aliases = definitions.values.select { |definition| definition.log_base }.flat_map(&:aliases)
+        regex_str = aliases.empty? ? "(?!x)x" : aliases.sort_by { |alias_name| [-alias_name.length, alias_name] }.join("|")
+        Regexp.new "(?:#{regex_str})"
+      end
+    end
+
     # Generates (and memoizes) a regexp matching special format units that should not be cached.
     #
     # @return [Regexp]
@@ -497,6 +518,7 @@ module RubyUnits
       @special_format_regex ||= Regexp.union(
         %r{\D/[\d+.]+},
         temp_regex,
+        log_regex,
         STONE_LB_UNIT_REGEX,
         LBS_OZ_UNIT_REGEX,
         FEET_INCH_UNITS_REGEX,
@@ -525,6 +547,7 @@ module RubyUnits
     def self.invalidate_regex_cache
       @unit_match_regex = nil
       @temp_regex = nil
+      @log_regex = nil
       @special_format_regex = nil
     end
 
@@ -822,6 +845,30 @@ module RubyUnits
 
     alias is_temperature? temperature?
 
+    # true if the unit is a logarithmic ratio relative to no reference (e.g. dB)
+    # @return [Boolean]
+    def logarithmic?
+      !!log_definition&.logarithmic?
+    end
+
+    alias is_logarithmic? logarithmic?
+
+    # true if the unit is an absolute logarithmic level (e.g. dBm, dBW)
+    # @return [Boolean]
+    def logarithmic_level?
+      !!log_definition&.logarithmic_level?
+    end
+
+    alias is_logarithmic_level? logarithmic_level?
+
+    # @return [RubyUnits::Unit::Definition, nil] the logarithmic definition for
+    #   the unit's single base token when this is a logarithmic unit
+    def log_definition
+      token = @numerator.first if @denominator == UNITY_ARRAY && @numerator&.size == 1
+      definition = token && unit_class.definition(token)
+      definition if definition&.log_base
+    end
+
     # true if a degree unit or equivalent.
     # @return [Boolean]
     def degree?
@@ -857,6 +904,8 @@ module RubyUnits
 
       if other.is_a?(NilClass)
         base_scalar <=> nil
+      elsif logarithmic? || logarithmic_level? || (other.instance_of?(Unit) && (other.logarithmic? || other.logarithmic_level?))
+        logarithmic_comparison(other)
       elsif !temperature? && other.respond_to?(:zero?) && other.zero?
         base_scalar <=> 0
       elsif other.instance_of?(Unit)
@@ -878,11 +927,15 @@ module RubyUnits
     # @return [Boolean]
     def ==(other)
       if other.respond_to?(:zero?) && other.zero?
-        zero?
+        logarithmic_level? ? false : zero?
       elsif other.instance_of?(Unit)
-        return false unless compatible_with?(other)
+        if logarithmic? || logarithmic_level? || other.logarithmic? || other.logarithmic_level?
+          logarithmic_equality(other)
+        else
+          return false unless compatible_with?(other)
 
-        base_scalar == other.base_scalar
+          base_scalar == other.base_scalar
+        end
       else
         begin
           coerced_unit, coerced_other = coerce(other)
@@ -949,6 +1002,7 @@ module RubyUnits
     def +(other)
       case other
       when Unit
+        return logarithmic_add(other) if logarithmic? || logarithmic_level? || other.logarithmic? || other.logarithmic_level?
         if zero?
           other.dup
         elsif compatible_with?(other)
@@ -981,6 +1035,7 @@ module RubyUnits
     def -(other)
       case other
       when Unit
+        return logarithmic_subtract(other) if logarithmic? || logarithmic_level? || other.logarithmic? || other.logarithmic_level?
         if zero?
           other_copy = other.dup
           if other.zero?
@@ -1017,12 +1072,16 @@ module RubyUnits
     def *(other)
       case other
       when Unit
+        return logarithmic_multiply(other) if logarithmic? || logarithmic_level? || other.logarithmic? || other.logarithmic_level?
         raise ArgumentError, "Cannot multiply by temperatures" if [other, self].any?(&:temperature?)
 
         opts = unit_class.eliminate_terms(@scalar * other.scalar, @numerator + other.numerator, @denominator + other.denominator)
         opts[:signature] = @signature + other.signature
         unit_class.new(opts)
       when Numeric
+        if logarithmic_level?
+          raise ArgumentError, "Cannot multiply an absolute logarithmic level by a number"
+        end
         unit_class.new(scalar: @scalar * other, numerator: @numerator, denominator: @denominator, signature: @signature)
       else
         coerced_unit, coerced_other = coerce(other)
@@ -1040,6 +1099,7 @@ module RubyUnits
     def /(other)
       case other
       when Unit
+        return logarithmic_divide(other) if logarithmic? || logarithmic_level? || other.logarithmic? || other.logarithmic_level?
         raise ArgumentError, "Cannot divide with temperatures" if [other, self].any?(&:temperature?)
         raise ZeroDivisionError if other.zero?
 
@@ -1048,6 +1108,9 @@ module RubyUnits
         opts[:signature] = @signature - other.signature
         unit_class.new(opts)
       when Numeric
+        if logarithmic_level?
+          raise ArgumentError, "Cannot divide an absolute logarithmic level by a number"
+        end
         raise ZeroDivisionError if other.zero?
 
         sc = unit_class.simplify_rational(Rational(@scalar, other))
@@ -1064,6 +1127,9 @@ module RubyUnits
     # @return [Unit]
     # @raise [ArgumentError] if units are not compatible
     def remainder(other)
+      if logarithmic? || logarithmic_level?
+        raise ArgumentError, "Cannot take the remainder of logarithmic units"
+      end
       ensure_compatible_with(other)
       unit_class.new(base_scalar.remainder(other.to_unit.base_scalar), to_base.units).convert_to(self)
     end
@@ -1074,6 +1140,9 @@ module RubyUnits
     # @return [Array(Integer, Unit)]
     # @raise [ArgumentError] if units are not compatible
     def divmod(other)
+      if logarithmic? || logarithmic_level?
+        raise ArgumentError, "Cannot take the remainder of logarithmic units"
+      end
       ensure_compatible_with(other)
       [quo(other).to_base.floor, self % other]
     end
@@ -1084,6 +1153,9 @@ module RubyUnits
     # @return [Integer]
     # @raise [ArgumentError] if units are not compatible
     def %(other)
+      if logarithmic? || logarithmic_level?
+        raise ArgumentError, "Cannot take the remainder of logarithmic units"
+      end
       ensure_compatible_with(other)
       unit_class.new(base_scalar % other.to_unit.base_scalar, to_base.units).convert_to(self)
     end
@@ -1099,6 +1171,44 @@ module RubyUnits
       self / other
     end
     alias fdiv quo
+
+    # Add the underlying linear powers represented by two absolute logarithmic
+    # levels (e.g. dBm) and return the combined level.
+    #
+    # Adding two levels with {#+} is intentionally invalid because levels live
+    # on a logarithmic scale. This method performs an explicit conversion to the
+    # linear power domain, sums the powers, and converts the result back.
+    #
+    # @param other [Unit] an absolute logarithmic level or a linear power compatible
+    #   with the receiver's reference unit
+    # @return [Unit] the combined power expressed in the receiver's level units
+    # @raise [ArgumentError] when the receiver is not an absolute level, when the
+    #   argument is not a power, or when the combined power is negative
+    # @example
+    #   Unit.new("0 dBm").combine_power(Unit.new("0 dBm")) #=> 3.0103 dBm
+    def combine_power(other)
+      raise ArgumentError, "combine_power is only defined for absolute logarithmic levels" unless logarithmic_level?
+      raise ArgumentError, "combine_power requires a Unit argument" unless other.is_a?(Unit)
+
+      definition = log_definition
+      own_linear = log_power(@scalar, definition)
+      other_linear = if other.logarithmic_level?
+                       other_level_scalar_in(other, definition)
+                    else
+                      reference = reference_log_unit(definition)
+                      raise ArgumentError, "combine_power requires a compatible power argument" unless other.compatible_with?(reference)
+
+                       Float((other.to_base / reference).to_base.scalar)
+                    end
+
+      total_linear = own_linear + other_linear
+      raise ArgumentError, "Cannot combine powers whose sum is not a number" if total_linear.nan?
+      raise ArgumentError, "Cannot combine powers into a negative total" unless total_linear.positive? || total_linear.zero? || total_linear.infinite?
+
+      convert_linear_power_to_level(total_linear, definition)
+    end
+
+    alias power_sum combine_power
 
     # Exponentiation.  Only takes integer powers.
     # Note that anything raised to the power of 0 results in a [Unit] object with a scalar of 1, and no units.
@@ -1117,6 +1227,7 @@ module RubyUnits
     def **(other)
       is_temperature = temperature?
       raise ArgumentError, "Cannot raise a temperature to a power" if is_temperature
+      raise ArgumentError, "Cannot raise a logarithmic unit to a power" if logarithmic? || logarithmic_level?
 
       if other.is_a?(Numeric)
         return inverse if other == -1
@@ -1167,6 +1278,7 @@ module RubyUnits
     # @raise [ArgumentError] when exponent is 0
     def root(exponent)
       raise ArgumentError, "Cannot take the root of a temperature" if temperature?
+      raise ArgumentError, "Cannot take the root of a logarithmic unit" if logarithmic? || logarithmic_level?
       raise ArgumentError, "Exponent must an Integer" unless exponent.is_a?(Integer)
       raise ArgumentError, "0th root undefined" if exponent.zero?
       return self if exponent == 1
@@ -1224,6 +1336,21 @@ module RubyUnits
       return self if other.is_a?(NilClass)
       return self if other.is_a?(TrueClass)
       return self if other.is_a?(FalseClass)
+
+      if logarithmic? || logarithmic_level?
+        target_unit_name = case other
+                           when Unit
+                             other.units
+                           when String
+                             other.strip
+                           end
+        return convert_logarithmic(other, target_unit_name) if target_unit_name
+      end
+
+      if other.is_a?(Unit) ? other.logarithmic? : (other.is_a?(String) && other.strip.match?(/\A#{unit_class.log_regex}\z/))
+        target_unit_name = other.is_a?(Unit) ? other.units : other.strip
+        return convert_linear_to_logarithmic(target_unit_name)
+      end
 
       if (other.is_a?(Unit) && other.temperature?) || (other.is_a?(String) && other =~ unit_class.temp_regex)
         raise ArgumentError, "Receiver is not a temperature unit" unless degree?
@@ -1295,6 +1422,9 @@ module RubyUnits
         scalar_is_integer = @scalar.is_a?(Integer)
         conversion_scalar = scalar_is_integer ? @scalar.to_r : @scalar
         converted_value = conversion_scalar * (source_numerator_values + target_denominator_values).reduce(1, :*) / (target_numerator_values + source_denominator_values).reduce(1, :*)
+        if !converted_value.is_a?(Float) && converted_value.abs > Float::MAX
+          converted_value = converted_value.positive? ? Float::INFINITY : -Float::INFINITY
+        end
         # Convert the scalar to an Integer if the result is equivalent to an
         # integer
         converted_value = unit_class.normalize_to_i(converted_value)
@@ -1503,6 +1633,8 @@ module RubyUnits
     # true if scalar is zero
     # @return [Boolean]
     def zero?
+      return false if logarithmic_level?
+
       base_scalar.zero?
     end
 
@@ -1703,6 +1835,7 @@ module RubyUnits
     # @raise [ArgumentError] if operation is not allowed (temperature units or non-integer exponent)
     def validate_power_operation(exponent)
       raise ArgumentError, "Cannot raise a temperature to a power" if temperature?
+      raise ArgumentError, "Cannot raise a logarithmic unit to a power" if logarithmic? || logarithmic_level?
       raise ArgumentError, "Exponent must be an Integer" unless exponent.is_a?(Integer)
     end
 
@@ -1829,6 +1962,7 @@ module RubyUnits
     # @return [Boolean] true if scalar equals its integer representation, false otherwise
     def scalar_is_integer?
       return false if @scalar.is_a?(Complex)
+      return false if @scalar.respond_to?(:infinite?) && @scalar.infinite?
 
       @scalar == @scalar.to_i
     end
@@ -1939,6 +2073,11 @@ module RubyUnits
       cached = unit_class.cached.get(unit_string)
       if cached
         copy(cached * scalar)
+      elsif (log_definition_name = unit_class.unit_map[unit_string.strip]) &&
+            (log_definition = unit_class.definition(log_definition_name))&.log_base
+        @scalar = validate_scalar(scalar)
+        @numerator = [log_definition.name].freeze
+        @denominator = UNITY_ARRAY
       else
         parse_string("#{scalar} #{unit_string}")
       end
@@ -2041,6 +2180,7 @@ module RubyUnits
     def finalize_initialization(options)
       update_base_scalar
       validate_temperature
+      validate_logarithmic
       cache_unit_if_needed(options)
       freeze_instance_variables
     end
@@ -2050,6 +2190,329 @@ module RubyUnits
     # @raise [ArgumentError] if temperature is below absolute zero
     def validate_temperature
       raise ArgumentError, "Temperatures must not be less than absolute zero" if temperature? && base_scalar.negative?
+    end
+
+    # Raise unless the scalar of a logarithmic unit is a real, non-NaN number.
+    # @return [void]
+    # @raise [ArgumentError] when the scalar is complex or NaN
+    def validate_logarithmic
+      return unless logarithmic? || logarithmic_level?
+      raise ArgumentError, "Logarithmic units require a real scalar" unless @scalar.is_a?(Numeric) && @scalar.real?
+      raise ArgumentError, "Logarithmic units require a finite value or Infinity" if @scalar.respond_to?(:nan?) && @scalar.nan?
+    end
+
+    # @param definition [RubyUnits::Unit::Definition]
+    # @return [Numeric] the log_base raised to (value * log_base / log_scale)
+    def log_power(value, definition)
+      definition.log_base ** (Float(value) / definition.log_scale)
+    end
+
+    # @param definition [RubyUnits::Unit::Definition]
+    # @return [Unit] a unitless unit representing the definition's reference quantity
+    def reference_log_unit(definition)
+      reference_alias = definition.log_reference[1..-2]
+      unit_class.new("1 #{reference_alias}").to_base
+    end
+
+    # Linear value of a logarithmic reference expressed in the base power unit.
+    # e.g. the dBm reference (1 milliwatt) is 1/1000 watt.
+    # @param definition [RubyUnits::Unit::Definition]
+    # @return [Numeric]
+    def reference_scale_factor(definition)
+      unit_class.new("1 #{definition.log_reference[1..-2]}").to_base.scalar
+    end
+
+    # Construct a logarithmic unit with the given scalar.
+    # @param definition [RubyUnits::Unit::Definition]
+    # @param value [Numeric]
+    # @return [Unit]
+    def new_log_unit(definition, value)
+      unit_class.new(value, definition.display_name)
+    end
+
+    # Express a level's scalar in another level's scale, applying the reference offset.
+    # @param value [Numeric] scalar in the receiver's level units
+    # @param definition [RubyUnits::Unit::Definition] receiver's definition
+    # @param target_definition [RubyUnits::Unit::Definition] target level definition
+    # @return [Numeric]
+    def level_scalar_in(value, definition, target_definition)
+      if definition.log_base != target_definition.log_base || definition.log_scale != target_definition.log_scale
+        raise ArgumentError, "Incompatible logarithmic scales (#{definition.display_name} and #{target_definition.display_name})"
+      end
+
+      source_reference = reference_log_unit(definition)
+      target_reference = reference_log_unit(target_definition)
+      return value if source_reference == target_reference
+
+      ratio = (source_reference / target_reference).to_base.scalar
+      value + target_definition.log_scale * ::Math.log(ratio) / ::Math.log(target_definition.log_base)
+    end
+
+    # Find the reference-free ratio definition sharing a level's base and scale.
+    # @param definition [RubyUnits::Unit::Definition] a logarithmic level definition
+    # @return [RubyUnits::Unit::Definition]
+    # @raise [ArgumentError] when no matching ratio unit is defined
+    def ratio_log_definition_for(definition)
+      unit_class.definitions.values.find do |candidate|
+        candidate.logarithmic? &&
+          candidate.log_base == definition.log_base &&
+          candidate.log_scale == definition.log_scale
+      end || raise(ArgumentError, "No logarithmic ratio unit is defined for #{definition.display_name}")
+    end
+
+    # Implementation of {#+} for logarithmic operands.
+    # @param other [Unit]
+    # @return [Unit]
+    def logarithmic_add(other)
+      if logarithmic_level? && other.logarithmic_level?
+        raise ArgumentError, "Cannot add two absolute logarithmic levels; use Unit#combine_power to add their powers"
+      end
+      unless other.logarithmic? || other.logarithmic_level?
+        raise ArgumentError, "Cannot add a non-logarithmic quantity to a logarithmic unit"
+      end
+
+      definition = log_definition
+      other_definition = other.log_definition
+      if definition.log_base != other_definition.log_base || definition.log_scale != other_definition.log_scale
+        raise ArgumentError, "Incompatible logarithmic bases or scales"
+      end
+
+      if logarithmic_level?
+        new_log_unit(definition, @scalar + other.scalar)
+      elsif other.logarithmic_level?
+        new_log_unit(other_definition, other.scalar + @scalar)
+      else
+        new_log_unit(definition, @scalar + other.scalar)
+      end
+    end
+
+    # Implementation of {#-} for logarithmic operands.
+    # @param other [Unit]
+    # @return [Unit]
+    def logarithmic_subtract(other)
+      definition = log_definition
+      if logarithmic_level? && other.logarithmic_level?
+        target_scalar = level_scalar_in(other.scalar, other.log_definition, definition)
+        ratio_definition = ratio_log_definition_for(definition)
+        difference = @scalar - target_scalar
+        raise ArgumentError, "Result of subtracting logarithmic levels is not a number" if difference.respond_to?(:nan?) && difference.nan?
+
+        return new_log_unit(ratio_definition, difference)
+      end
+      if logarithmic_level? && other.logarithmic?
+        if definition.log_base != other.log_definition.log_base || definition.log_scale != other.log_definition.log_scale
+          raise ArgumentError, "Incompatible logarithmic bases or scales"
+        end
+
+        return new_log_unit(definition, @scalar - other.scalar)
+      end
+      if logarithmic_level? || other.logarithmic_level?
+        raise ArgumentError, "Cannot subtract a logarithmic level from a logarithmic ratio"
+      end
+      unless other.logarithmic? || other.logarithmic_level?
+        raise ArgumentError, "Cannot subtract a non-logarithmic quantity from a logarithmic unit"
+      end
+      if definition.log_base != other.log_definition.log_base || definition.log_scale != other.log_definition.log_scale
+        raise ArgumentError, "Incompatible logarithmic bases or scales"
+      end
+
+      new_log_unit(definition, @scalar - other.scalar)
+    end
+
+    # Implementation of {#*} for logarithmic operands.
+    # @param other [Unit]
+    # @return [Unit]
+    def logarithmic_multiply(other)
+      if logarithmic_level? || other.logarithmic_level?
+        raise ArgumentError, "Cannot multiply an absolute logarithmic level"
+      end
+      if logarithmic? && other.logarithmic?
+        raise ArgumentError, "Cannot multiply two logarithmic ratios"
+      end
+
+      ratio = logarithmic? ? self : other
+      other_unit = logarithmic? ? other : self
+      raise ArgumentError, "Cannot multiply a logarithmic ratio by a dimensional unit" unless other_unit.unitless?
+
+      unit_class.new(scalar: ratio.scalar * other_unit.base_scalar, numerator: ratio.numerator, denominator: ratio.denominator)
+    end
+
+    # Implementation of {#/} for logarithmic operands.
+    # @param other [Unit]
+    # @return [Unit]
+    def logarithmic_divide(other)
+      if logarithmic_level?
+        if other.logarithmic?
+          raise ArgumentError, "Cannot divide a logarithmic level by a logarithmic ratio"
+        end
+        raise ArgumentError, "Cannot divide an absolute logarithmic level"
+      end
+      if other.logarithmic_level?
+        raise ArgumentError, "Cannot divide by an absolute logarithmic level"
+      end
+      if other.logarithmic?
+        raise ArgumentError, "Cannot divide two logarithmic ratios"
+      end
+      raise ZeroDivisionError if other.zero?
+      raise ArgumentError, "Cannot divide a logarithmic ratio by a dimensional unit" unless other.unitless?
+
+      with_new_scalar(@scalar / other.base_scalar)
+    end
+
+    # Convert a logarithmic unit to a ratio, to a level, or to the linear domain.
+    # @param other [Unit, String] target
+    # @param target_unit_name [String] normalized target unit name
+    # @return [Unit]
+    def convert_logarithmic(other, target_unit_name)
+      target_definition = unit_class.definition(unit_class.unit_map[target_unit_name]) || unit_class.definition(target_unit_name)
+      definition = log_definition
+
+      if target_definition&.log_base
+        return self if target_unit_name == units
+
+        if logarithmic_level? == target_definition.logarithmic_level?
+          if target_definition.logarithmic_level?
+            new_log_unit(target_definition, level_scalar_in(@scalar, definition, target_definition))
+          else
+            if definition.log_base != target_definition.log_base
+              raise ArgumentError, "Incompatible logarithmic bases (#{definition.display_name} and #{target_definition.display_name})"
+            end
+
+            new_log_unit(target_definition, @scalar * Rational(target_definition.log_scale, definition.log_scale))
+          end
+        else
+          raise ArgumentError, "Cannot convert between a logarithmic ratio and an absolute level"
+        end
+      elsif logarithmic_level?
+        target = other.is_a?(Unit) ? other : unit_class.new(target_unit_name)
+        reference_power = reference_log_unit(definition)
+        raise ArgumentError, "Cannot convert logarithmic level '#{units}' to '#{target_unit_name}'" unless target.compatible_with?(reference_power)
+
+        linear_scalar = log_power(@scalar, definition) * reference_scale_factor(definition)
+        linear_scalar = Float::INFINITY if linear_scalar.infinite? || linear_scalar > Float::MAX
+        linear_unit = unit_class.new(scalar: Float(linear_scalar), numerator: reference_power.numerator, denominator: reference_power.denominator)
+        target.is_a?(Unit) ? linear_unit.convert_to(target.units) : linear_unit
+      else
+        return with_new_scalar(log_power(@scalar, definition)) if target_unit_name.empty?
+
+        raise ArgumentError, "Cannot convert logarithmic ratio '#{units}' to a dimensional unit"
+      end
+    end
+
+    # Convert a linear (dimensional or unitless) quantity to a logarithmic ratio or level.
+    # @param target_unit_name [String] target logarithmic unit name
+    # @return [Unit]
+    def convert_linear_to_logarithmic(target_unit_name)
+      target_definition = unit_class.definition(unit_class.unit_map[target_unit_name])
+      unless target_definition&.log_base
+        raise ArgumentError, "Cannot convert '#{target_unit_name}' to a logarithmic unit"
+      end
+
+      linear_scalar = if unitless?
+                        raise ArgumentError, "Cannot convert a unitless quantity to logarithmic level '#{target_unit_name}'; use a power unit such as '#{target_definition.log_reference[1..-2]}'" if target_definition.logarithmic_level?
+
+                        base_scalar
+                      else
+                        reference_power = reference_log_unit(target_definition)
+                        unless target_definition.logarithmic? || compatible_with?(reference_power)
+                          raise ArgumentError, "Cannot convert '#{units}' to logarithmic unit '#{target_unit_name}'"
+                        end
+
+                        if target_definition.logarithmic_level?
+                          Float((to_base / reference_power).to_base.scalar)
+                        else
+                          base_scalar
+                        end
+                      end
+
+      logarithmic_level_from_linear(linear_scalar, target_definition, target_unit_name)
+    end
+
+    # Map a linear scalar to a logarithmic scalar, applying the common domain rules.
+    # @return [Unit]
+    def logarithmic_level_from_linear(linear_scalar, target_definition, target_unit_name)
+      if linear_scalar.zero? && target_definition.logarithmic_level?
+        return new_log_unit(target_definition, -Float::INFINITY)
+      end
+      unless linear_scalar.positive? || linear_scalar.infinite?
+        raise ArgumentError, "Cannot convert a non-positive quantity to logarithmic unit '#{target_unit_name}'"
+      end
+
+      new_log_unit(target_definition, target_definition.log_scale * ::Math.log(linear_scalar) / ::Math.log(target_definition.log_base))
+    end
+
+    # Express another level's linear magnitude relative to the receiver's reference.
+    # @return [Float]
+    def other_level_scalar_in(other, definition)
+      offset_scalar = level_scalar_in(other.scalar, other.log_definition, definition)
+      log_power(offset_scalar, definition)
+    end
+
+    # Convert an already normalized linear scalar (relative to a reference) to a level.
+    # @return [Unit]
+    def convert_linear_power_to_level(linear_scalar, definition)
+      level = if linear_scalar.zero?
+                -Float::INFINITY
+              else
+                definition.log_scale * ::Math.log(linear_scalar) / ::Math.log(definition.log_base)
+              end
+      new_log_unit(definition, level)
+    end
+
+    # Normalize a logarithmic quantity to a scalar in the definition's level scale.
+    # @return [Numeric]
+    def logarithmic_comparison(other)
+      unless other.instance_of?(Unit)
+        raise ArgumentError, "Cannot compare logarithmic unit '#{units}' with #{other.inspect}"
+      end
+      definition = log_definition
+      other_definition = other.log_definition
+      unless definition&.log_base && other_definition&.log_base
+        raise ArgumentError, "Cannot compare logarithmic unit '#{units}' with '#{other.units}'"
+      end
+      if definition.logarithmic_level? != other_definition.logarithmic_level?
+        raise ArgumentError, "Cannot compare a logarithmic ratio with an absolute level"
+      end
+      if other_definition.log_base != definition.log_base || other_definition.log_scale != definition.log_scale
+        raise ArgumentError, "Cannot compare logarithmic units with different bases or scales"
+      end
+
+      if logarithmic_level?
+        base_scalar <=> level_scalar_in(other.scalar, other_definition, definition)
+      else
+        base_scalar <=> other.base_scalar
+      end
+    end
+
+    # Equality check for logarithmic operands.
+    # @return [Boolean]
+    def logarithmic_equality(other)
+      definition = log_definition
+      other_definition = other.log_definition
+      return false unless definition&.log_base && other_definition&.log_base
+
+      if definition.logarithmic_level? != other_definition.logarithmic_level?
+        false
+      elsif other_definition.log_base != definition.log_base || other_definition.log_scale != definition.log_scale
+        false
+      elsif logarithmic_level?
+        log_scalars_equal?(@scalar, level_scalar_in(other.scalar, other_definition, definition))
+      else
+        log_scalars_equal?(@scalar, other.scalar)
+      end
+    end
+
+    # Compare two logarithmic scalars, tolerating floating point round-off from
+    # repeated base/reference conversions while preserving exact comparisons.
+    # @return [Boolean]
+    def log_scalars_equal?(left, right)
+      return left == right unless [left, right].any? { |value| value.is_a?(Float) }
+      return left == right if [left, right].any? { |value| value.respond_to?(:nan?) && (value.infinite? || value.nan?) }
+      return true if (left - right).abs <= 1e-9
+      return true if left.zero? && right.abs < 1e-9
+
+      relative = (left - right).abs / [left.abs, right.abs].max
+      relative <= 1e-12
     end
 
     # Cache the unit if it meets caching criteria
@@ -2162,7 +2625,7 @@ module RubyUnits
       unit = unit_class.cached.get(unit_str)
       mult = if scalar_str == "" || scalar_str.nil?
                unit_class.parse_number("1")
-             else
+              else
                unit_class.parse_number(scalar_str)
              end
       mult = unit_class.normalize_to_i(mult)

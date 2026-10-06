@@ -27,6 +27,22 @@ class RubyUnits::Unit < Numeric
     #   definition.display_name = "meter"
     attr_accessor :display_name
 
+    # Logarithmic base for ratio/level units (e.g. 10 for dB)
+    #
+    # @return [Numeric, nil]
+    attr_accessor :log_base
+
+    # Multiplicative scale applied to the logarithm (e.g. 10 for dB)
+    #
+    # @return [Numeric, nil]
+    attr_accessor :log_scale
+
+    # Reference unit token (e.g. "<milliwatt>") for absolute logarithmic levels
+    # such as dBm. `nil` for reference-free ratios such as dB.
+    #
+    # @return [String, nil]
+    attr_accessor :log_reference
+
     # Create a new unit definition
     #
     # @param name [String] the name of the unit (angle brackets will be stripped)
@@ -64,6 +80,9 @@ class RubyUnits::Unit < Numeric
       @numerator = nil
       @denominator = nil
       @display_name = nil
+      @log_base = nil
+      @log_scale = nil
+      @log_reference = nil
       yield self if block_given?
       set_defaults(name, definition)
     end
@@ -139,6 +158,20 @@ class RubyUnits::Unit < Numeric
     #   unity_definition.unity?  #=> true
     #   kilo_definition.unity?   #=> false
     def unity? = prefix? && scalar == 1
+
+    # Check if this definition is a logarithmic ratio with no reference (e.g. dB)
+    #
+    # @return [Boolean] true for reference-free logarithmic units
+    def logarithmic?
+      !@log_base.nil? && @log_reference.nil?
+    end
+
+    # Check if this definition is an absolute logarithmic level (e.g. dBm, dBW)
+    #
+    # @return [Boolean] true for logarithmic levels relative to a reference unit
+    def logarithmic_level?
+      !@log_base.nil? && !@log_reference.nil?
+    end
 
     # Check if this is a base unit definition
     #

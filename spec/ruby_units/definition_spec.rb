@@ -47,3 +47,18 @@ describe "Unit::Definition('eV')" do
     it { is_expected.to eq("electron-volt") }
   end
 end
+
+RSpec.describe "logarithmic definitions" do
+  it "treats a definition with a base but no reference as a ratio" do
+    definition = Unit.definition("<decibel>")
+    expect(definition).to be_logarithmic
+    expect(definition).not_to be_logarithmic_level
+  end
+
+  it "treats a definition with a base and a reference as a level" do
+    definition = Unit.definition(Unit.unit_map["dBm"])
+    expect(definition).to be_logarithmic_level
+    expect(definition).not_to be_logarithmic
+    expect(definition.log_reference).to eq("<milliwatt>")
+  end
+end

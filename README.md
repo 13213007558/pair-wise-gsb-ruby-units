@@ -369,6 +369,55 @@ Conversions are probably better done like this...
 Unit.new('0 tempC') + Unit.new('100 degC') #=> Unit.new('100 tempC')
 ```
 
+### Logarithmic Units (dB, dBm, dBW)
+
+Logarithmic units are not linear quantities, so `3 dB`, `3 dBm`, and `3 mW`
+cannot be scaled or added the same way. Ruby-units distinguishes between:
+
+* **ratios** without a reference, such as `dB` (decibels), and
+* **absolute levels** relative to a named reference, such as `dBm`
+  (relative to 1 milliwatt) and `dBW` (relative to 1 watt).
+
+The logarithm base, the scale factor, and the reference unit are part of the
+unit definition and are preserved through conversions. A level is expressed as
+`scale * log_base(power / reference)`.
+
+```ruby
+# Round trip between an absolute level and its linear power
+Unit.new('0 dBm').convert_to('mW')          #=> 1 mW
+Unit.new('1 mW').convert_to('dBm')          #=> 0 dBm
+
+# Subtracting two levels yields a reference-free ratio
+Unit.new('13 dBm') - Unit.new('10 dBm')     #=> 3 dB
+
+# Adding a ratio to a level shifts the level
+Unit.new('0 dBm') + Unit.new('3 dB')        #=> 3 dBm
+
+# Adding two levels directly is an error because the values live on a log scale
+Unit.new('1 dBm') + Unit.new('2 dBm')       #=> ArgumentError
+```
+
+To combine the underlying powers (for example when adding two signals), use the
+explicit `#combine_power` operation instead of adding the level numbers:
+
+```ruby
+Unit.new('0 dBm').combine_power(Unit.new('0 dBm')) #=> 3.0103 dBm (2 mW)
+```
+
+Levels using different references convert against each other through their
+references. Zero linear power maps to `-Infinity`, negative power is rejected,
+and infinite levels are supported.
+
+```ruby
+Unit.new('0 dBW').convert_to('dBm')         #=> 30 dBm
+Unit.new('1 W').convert_to('dBm')          #=> 30 dBm
+Unit.new('0 mW').convert_to('dBm')         #=> -Infinity dBm
+```
+
+Ratios may be scaled by a unitless number (e.g. `Unit.new('6 dB') * 2`), but
+levels may not. Ordinary dimensional multiplication/division and temperature
+units are unaffected by these rules.
+
 ### Defining Units
 
 It is possible to define new units or redefine existing ones.

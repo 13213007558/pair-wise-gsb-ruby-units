@@ -99,4 +99,6 @@ RubyUnits::Unit.define("decibel") do |unit|
   unit.numerator = %w[<decibel>]
   unit.aliases = %w[dB decibel decibels]
   unit.kind = :logarithmic
+  unit.log_base = 10
+  unit.log_scale = 10
 end
