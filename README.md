@@ -460,6 +460,49 @@ gem 'ruby-units', require: 'ruby_units/namespaced'
 Note: when using the namespaced version, the `Unit.new('unit string')` helper
 will not be defined.
 
+### Nondimensional expressions
+
+`RubyUnits::Nondimensional` provides a small, explicit expression tree for
+preparing equations before sending them to a solver. It supports addition,
+subtraction, multiplication, division, integer powers, and positive-integer
+time derivatives. Strings are never parsed or evaluated, and no symbolic math
+dependency is required.
+
+```ruby
+require 'ruby_units/namespaced'
+
+nondim = RubyUnits::Nondimensional
+x = nondim.variable(:x)
+m = nondim.variable(:m)
+c = nondim.variable(:c)
+k = nondim.variable(:k)
+
+# m x'' + c x' + k x = 0
+equation = m * x.ddt(2) + c * x.ddt + k * x
+
+result = nondim.transform(
+  equation,
+  dimensions: {
+    x: { length: 1 },
+    m: { mass: 1 },
+    c: { mass: 1, time: -1 },
+    k: { mass: 1, time: -2 }
+  },
+  scales: { x: 2, m: 2, c: 1/2r, k: 4 },
+  time_scale: 3
+)
+
+result.expression        # dimensionless expression
+result.dimensions        # dimensions of the original root expression
+result.scale             # multiplier for restoring the original residual
+puts result.restoration.description
+```
+
+Every addition or subtraction branch is checked before transformation. A time
+derivative of order `n` is divided by the supplied time scale raised to the
+`n`th power. After solving the dimensionless equation, multiply a residual by
+`result.scale` to compare it with the original-unit residual.
+
 ### Configuration
 
 Configuration options can be set like:
