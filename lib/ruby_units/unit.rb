@@ -681,6 +681,19 @@ module RubyUnits
 
     alias unit to_unit
 
+    # Emit this unit as a canonical UCUM code.
+    #
+    # Only units representable in the supported UCUM subset can be emitted.
+    # Use {RubyUnits::Ucum.parse} for the strict, case-sensitive parser.
+    #
+    # @return [String] a UCUM unit code
+    # @raise [ArgumentError] when the unit cannot be represented in UCUM
+    # @example
+    #   RubyUnits::Unit.new("1 mg/L").to_ucum #=> "mg/L"
+    def to_ucum
+      RubyUnits::Ucum.dump(self)
+    end
+
     # Is this unit in base form?
     # @return [Boolean]
     def base?

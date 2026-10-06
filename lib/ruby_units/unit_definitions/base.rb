@@ -48,7 +48,7 @@ end
 RubyUnits::Unit.define("kelvin") do |unit|
   unit.scalar = 1
   unit.numerator = %w[<kelvin>]
-  unit.aliases = %w[degK kelvin]
+  unit.aliases = %w[K degK kelvin]
   unit.kind = :temperature
 end
 

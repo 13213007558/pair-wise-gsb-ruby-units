@@ -517,6 +517,38 @@ calculations. This in turn can have a negative impact on performance. The design
 of ruby-units has emphasized accuracy over speed. YMMV if you are doing a lot of
 math involving units.
 
+## UCUM Codes
+
+External systems (such as detection reports) often provide units as
+[UCUM](http://unitsofmeasure.org/ucum.html) codes. `RubyUnits::Ucum` is an
+independent, strict entry point for those codes. Unlike `Unit.new`, which is
+deliberately lenient, the UCUM parser is strictly case sensitive (`mm` is a
+millimeter while `Mm` is a megameter and `MM` is an error).
+
+The supported subset covers ordinary proportional units, decimal prefixes
+(`k`, `m`, `u`, `da`, ...), integer exponents (`m2`, `s-1`, `kg.m.s-2`),
+parentheses (`(kg.m)/(s2)`), annotations (`mg{Lipid}/L`), and the affine
+(offset) point temperatures `Cel` and `[degF]`. UCUM special units such as
+`[pH]` are not implemented; they raise a `RubyUnits::Ucum::ParseError` that
+reports the unsupported function and the zero-based position of the offending
+code.
+
+```ruby
+expression = RubyUnits::Ucum.parse("mg/L")   # strict parse
+expression.unit                               #=> 1 mg/L
+expression.to_ucum                            #=> "mg/L"
+
+RubyUnits::Ucum.convert(0, "Cel", "[degF]")  #=> 32 (affine conversion)
+
+RubyUnits::Unit.new("1 kPa").to_ucum          #=> "kPa"
+
+begin
+  RubyUnits::Ucum.parse("Cel/s")              # affine units cannot be multiplied
+rescue RubyUnits::Ucum::ParseError => error
+  error.position                              #=> 0
+end
+```
+
 ## Support Policy
 
 Only currently maintained versions of ruby and jruby are supported.
